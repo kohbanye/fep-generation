@@ -36,6 +36,7 @@ def optimize_rgroups(ligand_filename, protein_filename, attachment_index, output
     cs.add_protein("rec_final.pdb")
 
     for mol in rgroups.Mol:
+        mol = Chem.AddHs(mol)
         cs.add_rgroups(mol)
 
     results = cs.evaluate(
@@ -68,7 +69,28 @@ def optimize_rgroups(ligand_filename, protein_filename, attachment_index, output
         mol.to_file(os.path.join(output_dir, "results", f"{i}.pdb"))
 
 
+def dock_original_ligand(ligand_filename, protein_filename):
+    ligand = Chem.SDMolSupplier(ligand_filename, removeHs=False)[0]
+    ligand = Chem.AddHs(ligand)
+
+    rec = prody.parsePDB(protein_filename).select("not (nucleic or hetatm or water)")
+    prody.writePDB("rec.pdb", rec)
+    fegrow.fix_receptor("rec.pdb", "rec_final.pdb")
+    prody.parsePDB("rec_final.pdb")
+
+    rmol = fegrow.RMol(ligand)
+
+    affinities = rmol.gnina(receptor_file="rec_final.pdb")
+    print(affinities)
+
+
 if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--data_index", type=int)
+    args = parser.parse_args()
+
     data_info = [
         {
             "ligand_filename": "data/sarscov2/coreh.sdf",
@@ -82,5 +104,18 @@ if __name__ == "__main__":
             "attachment_index": 29,
             "output_dir": "data/JNK1/output",
         },
+        {
+            "ligand_filename": "data/BACE1/ligand_reduced.sdf",
+            "protein_filename": "data/BACE1/4djw.pdb",
+            "attachment_index": 32,
+            "output_dir": "data/BACE1/output",
+        },
+        {
+            "ligand_filename": "data/BACE1/ligand_reduced_2.sdf",
+            "protein_filename": "data/BACE1/4djw.pdb",
+            "attachment_index": 21,
+            "output_dir": "data/BACE1/output_2",
+        },
     ]
-    optimize_rgroups(**data_info[1])
+    optimize_rgroups(**data_info[args.data_index])
+    # dock_original_ligand("data/JNK1/ligand_reduced.sdf", "data/JNK1/2GMX.pdb")
