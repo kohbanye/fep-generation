@@ -8,6 +8,7 @@
 DATA_IDX=$1
 
 . /etc/profile.d/modules.sh
+module load cuda/11.8.0
 source $HOME/.zshrc
 conda activate fegrow
 
