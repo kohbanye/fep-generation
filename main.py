@@ -2,6 +2,7 @@ import os
 
 import fegrow
 import prody
+from dask.distributed import LocalCluster
 from fegrow import ChemSpace, RGroups
 from rdkit import Chem
 
@@ -11,7 +12,9 @@ def scoring_function(rmol, pdb_filename, data):
     return min(affinities.CNNaffinity)
 
 
-def optimize_rgroups(ligand_filename, protein_filename, attachment_index, output_dir):
+def optimize_rgroups(
+    ligand_filename, protein_filename, attachment_index, output_dir, use_ani=False
+):
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
 
@@ -31,7 +34,8 @@ def optimize_rgroups(ligand_filename, protein_filename, attachment_index, output
     fegrow.fix_receptor("rec.pdb", "rec_final.pdb")
     prody.parsePDB("rec_final.pdb")
 
-    cs = ChemSpace()
+    cluster = LocalCluster(n_workers=8)
+    cs = ChemSpace(dask_cluster=cluster)
     cs.add_scaffold(template)
     cs.add_protein("rec_final.pdb")
 
@@ -43,13 +47,14 @@ def optimize_rgroups(ligand_filename, protein_filename, attachment_index, output
         scoring_function=scoring_function,
         num_conf=50,
         minimum_conf_rms=0.5,
-        use_ani=True,
+        use_ani=use_ani,
         platform="cuda",
         gnina_gpu=True,
+        min_dst_allowed=0.5,
     )
 
     with Chem.SDWriter(os.path.join(output_dir, "results.sdf")) as writer:
-        for row in results.sort_values("score").iterrows():
+        for row in results.sort_values("score", ascending=False).iterrows():
             mol = row[1]["Mol"]
             mol.SetProp("score", str(row[1]["score"]))
             writer.write(mol)
@@ -64,8 +69,13 @@ def optimize_rgroups(ligand_filename, protein_filename, attachment_index, output
 
     best_molecule.to_file(os.path.join(output_dir, "best_molecule.pdb"))
 
-    results.to_csv(os.path.join(output_dir, "results.csv"))
-    for i, mol in enumerate(results.sort_values("score")["Mol"]):
+    results.sort_values("score", ascending=False).to_csv(
+        os.path.join(output_dir, "results.csv")
+    )
+
+    if not os.path.exists(os.path.join(output_dir, "results")):
+        os.makedirs(os.path.join(output_dir, "results"))
+    for i, mol in enumerate(results.sort_values("score", ascending=False)["Mol"]):
         mol.to_file(os.path.join(output_dir, "results", f"{i}.pdb"))
 
 
@@ -87,35 +97,24 @@ def dock_original_ligand(ligand_filename, protein_filename):
 if __name__ == "__main__":
     import argparse
 
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--data_index", type=int)
+    parser = argparse.ArgumentParser(
+        description="Optimize R-groups for a ligand attached to a protein"
+    )
+    parser.add_argument("--ligand", type=str, help="Ligand filename")
+    parser.add_argument("--protein", type=str, help="Protein filename")
+    parser.add_argument(
+        "--attachment_index", type=int, help="Attachment index of atom in ligand"
+    )
+    parser.add_argument("--output_dir", type=str, help="Output directory")
+    parser.add_argument(
+        "--use_ani", type=bool, default=False, help="Whether to use TorchANI"
+    )
     args = parser.parse_args()
 
-    data_info = [
-        {
-            "ligand_filename": "data/sarscov2/coreh.sdf",
-            "protein_filename": "data/sarscov2/7L10.pdb",
-            "attachment_index": 40,
-            "output_dir": "data/sarscov2/output",
-        },
-        {
-            "ligand_filename": "data/JNK1/ligand_reduced.sdf",
-            "protein_filename": "data/JNK1/2GMX.pdb",
-            "attachment_index": 29,
-            "output_dir": "data/JNK1/output",
-        },
-        {
-            "ligand_filename": "data/BACE1/ligand_reduced.sdf",
-            "protein_filename": "data/BACE1/4djw.pdb",
-            "attachment_index": 32,
-            "output_dir": "data/BACE1/output",
-        },
-        {
-            "ligand_filename": "data/BACE1/ligand_reduced_2.sdf",
-            "protein_filename": "data/BACE1/4djw.pdb",
-            "attachment_index": 21,
-            "output_dir": "data/BACE1/output_2",
-        },
-    ]
-    optimize_rgroups(**data_info[args.data_index])
-    # dock_original_ligand("data/JNK1/ligand_reduced.sdf", "data/JNK1/2GMX.pdb")
+    optimize_rgroups(
+        ligand_filename=args.ligand,
+        protein_filename=args.protein,
+        attachment_index=args.attachment_index,
+        output_dir=args.output_dir,
+        use_ani=args.use_ani,
+    )
